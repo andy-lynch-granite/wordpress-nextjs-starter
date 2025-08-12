@@ -1,0 +1,55 @@
+{
+  "contexts": {
+    "architecture": {
+      "description": "System architecture and high-level design",
+      "include_patterns": [
+        "docs/architecture/**",
+        "README.md",
+        "docker-compose.yml",
+        "infrastructure/**"
+      ],
+      "memory_namespace": "architecture"
+    },
+    "frontend": {
+      "description": "Next.js frontend development",
+      "include_patterns": [
+        "frontend/**",
+        "package.json",
+        "next.config.js",
+        "tailwind.config.js"
+      ],
+      "memory_namespace": "frontend"
+    },
+    "backend": {
+      "description": "WordPress backend and API",
+      "include_patterns": [
+        "wordpress/**",
+        "functions.php",
+        "wp-config.php"
+      ],
+      "memory_namespace": "backend"
+    },
+    "infrastructure": {
+      "description": "Deployment and infrastructure",
+      "include_patterns": [
+        ".github/workflows/**",
+        "infrastructure/**",
+        "Dockerfile*",
+        "docker-compose.yml"
+      ],
+      "memory_namespace": "infrastructure"
+    },
+    "testing": {
+      "description": "Testing and quality assurance",
+      "include_patterns": [
+        "tests/**",
+        "*.test.*",
+        "*.spec.*",
+        "jest.config.js",
+        "playwright.config.js"
+      ],
+      "memory_namespace": "testing"
+    }
+  }
+}
+EOF < /dev/null

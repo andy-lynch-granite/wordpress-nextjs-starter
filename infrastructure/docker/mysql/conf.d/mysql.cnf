@@ -1,0 +1,59 @@
+[mysql]
+default-character-set = utf8mb4
+
+[mysqld]
+# Character set and collation
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+init-connect = 'SET NAMES utf8mb4'
+
+# InnoDB settings
+innodb_buffer_pool_size = 256M
+innodb_log_file_size = 64M
+innodb_log_buffer_size = 16M
+innodb_flush_log_at_trx_commit = 2
+innodb_file_per_table = 1
+
+# Query cache (disabled in MySQL 8.0+, but keeping for compatibility)
+# query_cache_type = 1
+# query_cache_size = 32M
+# query_cache_limit = 2M
+
+# General settings
+max_connections = 151
+max_allowed_packet = 64M
+tmp_table_size = 64M
+max_heap_table_size = 64M
+
+# Binary logging (for replication and point-in-time recovery)
+binlog_format = ROW
+log-bin = mysql-bin
+binlog_expire_logs_seconds = 604800
+
+# Slow query log
+slow_query_log = 1
+slow_query_log_file = /var/lib/mysql/slow-query.log
+long_query_time = 2
+log_queries_not_using_indexes = 1
+
+# Error log
+log-error = /var/lib/mysql/error.log
+
+# General query log (disable in production)
+general_log = 0
+general_log_file = /var/lib/mysql/general.log
+
+# Performance optimizations
+sync_binlog = 1
+innodb_doublewrite = 1
+innodb_flush_method = O_DIRECT
+
+# Security settings
+local_infile = 0
+ssl-ca = /var/lib/mysql/ca.pem
+ssl-cert = /var/lib/mysql/server-cert.pem
+ssl-key = /var/lib/mysql/server-key.pem
+
+[mysqldump]
+default-character-set = utf8mb4
+max_allowed_packet = 64M

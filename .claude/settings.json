@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__filesystem__write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "#!/bin/bash\n# Parse JSON input and check if technical-specifications.md was written\nFILE_PATH=$(echo \"$1\" | jq -r '.inputs.path // .inputs.file_path // empty')\n\nif [[ \"$FILE_PATH\" == *\"technical-specifications.md\"* ]]; then\n    echo \"🏗️ Architecture complete - Auto-triggering frontend development\" >&2\n    echo \"\" >&2\n    echo \"@frontend-dev The tech-lead has completed the technical architecture. Read docs/architecture/technical-specifications.md and autonomously implement the Next.js frontend:\" >&2\n    echo \"1. Set up Next.js 14 with TypeScript in frontend/ directory\" >&2\n    echo \"2. Configure GraphQL client for WordPress integration\" >&2\n    echo \"3. Create Hello World implementation per the specifications\" >&2\n    echo \"4. Set up all development tooling and build processes\" >&2\n    echo \"Work autonomously without waiting for manual prompts.\" >&2\n    exit 2\nfi"
+          },
+          {
+            "type": "command",
+            "command": "#!/bin/bash\n# Trigger WordPress setup when frontend package.json is created\nFILE_PATH=$(echo \"$1\" | jq -r '.inputs.path // .inputs.file_path // empty')\n\nif [[ \"$FILE_PATH\" == *\"frontend/package.json\"* ]]; then\n    echo \"⚛️ Frontend initialized - Auto-triggering WordPress setup\" >&2\n    echo \"\" >&2\n    echo \"@wp-dev Frontend structure is ready. Autonomously configure headless WordPress:\" >&2\n    echo \"1. Set up headless WordPress configuration in wordpress/ directory\" >&2\n    echo \"2. Configure WPGraphQL and custom post types per technical specifications\" >&2\n    echo \"3. Create sample content for Hello World demonstration\" >&2\n    echo \"4. Configure security and performance settings\" >&2\n    echo \"Work autonomously using the technical specifications as your guide.\" >&2\n    exit 2\nfi"
+          },
+          {
+            "type": "command",
+            "command": "#!/bin/bash\n# Trigger DevOps setup when WordPress config is created\nFILE_PATH=$(echo \"$1\" | jq -r '.inputs.path // .inputs.file_path // empty')\n\nif [[ \"$FILE_PATH\" == *\"wp-config.php\"* || \"$FILE_PATH\" == *\"wordpress/docker\"* ]]; then\n    echo \"🔧 WordPress configured - Auto-triggering DevOps deployment\" >&2\n    echo \"\" >&2\n    echo \"@devops WordPress backend is configured. Autonomously implement deployment:\" >&2\n    echo \"1. Set up Azure infrastructure per CI/CD architecture specifications\" >&2\n    echo \"2. Create GitHub Actions workflows for automated deployment\" >&2\n    echo \"3. Configure multi-environment pipeline (dev/staging/prod)\" >&2\n    echo \"4. Set up monitoring and security scanning\" >&2\n    echo \"Work autonomously using the detailed CI/CD documentation.\" >&2\n    exit 2\nfi"
+          }
+        ]
+      }
+    ]
+  }
+}

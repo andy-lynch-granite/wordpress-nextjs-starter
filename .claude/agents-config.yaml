@@ -1,0 +1,25 @@
+agents:
+  architect:
+    role: "Technical Architecture & Documentation"
+    description: "Handles system design, infrastructure planning, and documentation"
+    context_files: ["docs/**", "*.md", "architecture/**"]
+    tools: ["confluence", "github", "filesystem"]
+    
+  developer:
+    role: "Code Development & Implementation"
+    description: "Handles frontend/backend development and coding tasks"
+    context_files: ["frontend/**", "wordpress/**", "src/**"]
+    tools: ["github", "filesystem"]
+    
+  devops:
+    role: "CI/CD & Infrastructure Management"
+    description: "Handles deployment, infrastructure, and DevOps tasks"
+    context_files: [".github/**", "infrastructure/**", "docker*", "*.yml"]
+    tools: ["github", "filesystem"]
+    
+  tester:
+    role: "Quality Assurance & Testing"
+    description: "Handles testing strategy, test implementation, and quality assurance"
+    context_files: ["tests/**", "*.test.*", "*.spec.*"]
+    tools: ["filesystem"]
+EOF < /dev/null

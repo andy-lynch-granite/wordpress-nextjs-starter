@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "atlassian": {
+      "type": "sse",
+      "url": "https://mcp.atlassian.com/v1/sse"
+    },
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "@anthropic-ai/mcp-server-github"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "@anthropic-ai/mcp-server-filesystem",
+        "--allowed-directories",
+        "./"
+      ],
+      "env": {}
+    }
+  }
+}
