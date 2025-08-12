@@ -17,11 +17,13 @@ RUN docker-php-ext-install opcache
 # Install Redis PHP extension
 RUN pecl install redis && docker-php-ext-enable redis
 
-# Install WP-CLI
-RUN curl -O https://raw.githubusercontent.com/wp-cli/wp-cli/v2.10.0/phar/wp-cli.phar && \
+# Install WP-CLI using a more reliable method
+RUN curl -L https://github.com/wp-cli/wp-cli/releases/download/v2.10.0/wp-cli-2.10.0.phar -o wp-cli.phar && \
     chmod +x wp-cli.phar && \
-    mv wp-cli.phar /usr/local/bin/wp && \
-    wp --info --allow-root
+    mv wp-cli.phar /usr/local/bin/wp
+
+# Verify WP-CLI installation
+RUN wp --info --allow-root
 
 # Create necessary directories
 RUN mkdir -p /var/log/wordpress && \
@@ -29,13 +31,6 @@ RUN mkdir -p /var/log/wordpress && \
 
 # Copy configuration files
 COPY php.ini /usr/local/etc/php/conf.d/custom.ini
-COPY wp-config-local.php /var/www/html/wp-config-local.php
-
-# Copy setup scripts
-COPY wp-setup.sh /usr/local/bin/wp-setup.sh
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint-custom.sh
-RUN chmod +x /usr/local/bin/wp-setup.sh && \
-    chmod +x /usr/local/bin/docker-entrypoint-custom.sh
 
 # Set up Apache configuration for development
 RUN a2enmod rewrite && \
@@ -52,6 +47,8 @@ RUN mkdir -p /var/www/html/wp-content/uploads && \
 # Set working directory
 WORKDIR /var/www/html
 
-# Use custom entrypoint
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint-custom.sh"]
+# Expose port
+EXPOSE 80
+
+# Use default WordPress entrypoint
 CMD ["apache2-foreground"]
