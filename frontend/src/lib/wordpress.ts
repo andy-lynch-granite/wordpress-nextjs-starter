@@ -112,31 +112,113 @@ export const GET_SITE_SETTINGS = gql`
   }
 `
 
+// Mock data for when WordPress backend is not available
+const mockPosts: Post[] = [
+  {
+    id: '1',
+    slug: 'welcome-to-headless-wordpress',
+    title: 'Welcome to Headless WordPress + Next.js',
+    content: '<p>This is a demo post to showcase the headless WordPress setup. The WordPress backend will be deployed soon!</p><p>This static site is currently running on Azure Storage with automated CI/CD deployment via GitHub Actions.</p>',
+    excerpt: '<p>A welcome post demonstrating the headless WordPress + Next.js setup deployed on Azure.</p>',
+    date: new Date().toISOString(),
+    modified: new Date().toISOString(),
+    author: {
+      node: {
+        name: 'Demo Author',
+        slug: 'demo-author'
+      }
+    },
+    categories: {
+      nodes: [
+        { name: 'Getting Started', slug: 'getting-started' },
+        { name: 'Azure', slug: 'azure' }
+      ]
+    },
+    tags: {
+      nodes: [
+        { name: 'WordPress', slug: 'wordpress' },
+        { name: 'Next.js', slug: 'nextjs' },
+        { name: 'Azure', slug: 'azure' }
+      ]
+    }
+  },
+  {
+    id: '2',
+    slug: 'azure-deployment-guide',
+    title: 'Azure Deployment Architecture',
+    content: '<p>This headless WordPress + Next.js starter is designed for enterprise-grade deployment on Microsoft Azure.</p><h2>Current Status</h2><ul><li>✅ Azure Storage Static Website Hosting</li><li>✅ GitHub Actions CI/CD Pipeline</li><li>🚧 WordPress Backend (Container Apps) - Coming Soon</li><li>🚧 MySQL Database - Coming Soon</li></ul>',
+    excerpt: '<p>Learn about the Azure deployment architecture for this headless WordPress setup.</p>',
+    date: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
+    modified: new Date(Date.now() - 86400000).toISOString(),
+    author: {
+      node: {
+        name: 'Azure Architect',
+        slug: 'azure-architect'
+      }
+    },
+    categories: {
+      nodes: [
+        { name: 'Architecture', slug: 'architecture' },
+        { name: 'Azure', slug: 'azure' }
+      ]
+    },
+    tags: {
+      nodes: [
+        { name: 'Azure', slug: 'azure' },
+        { name: 'Deployment', slug: 'deployment' },
+        { name: 'CI/CD', slug: 'cicd' }
+      ]
+    }
+  }
+]
+
+const mockSiteSettings: SiteSettings = {
+  title: 'WordPress + Next.js Starter',
+  description: 'A modern headless WordPress starter deployed on Azure',
+  url: 'https://wordpressnextjsdevstatic.z16.web.core.windows.net'
+}
+
 // Helper functions for static generation
 export async function getAllPosts() {
+  // Check if WordPress backend is available
+  const wordpressUrl = process.env.WORDPRESS_GRAPHQL_URL || process.env.NEXT_PUBLIC_WORDPRESS_API_URL
+  
+  if (!wordpressUrl || wordpressUrl.includes('localhost')) {
+    console.log('WordPress backend not available, using mock data')
+    return mockPosts
+  }
+
   try {
     const { data } = await client.query({
       query: GET_ALL_POSTS,
       errorPolicy: 'all'
     })
-    return data?.posts?.nodes || []
+    return data?.posts?.nodes || mockPosts
   } catch (error) {
-    console.error('Error fetching posts:', error)
-    return []
+    console.error('Error fetching posts, falling back to mock data:', error)
+    return mockPosts
   }
 }
 
 export async function getPostBySlug(slug: string) {
+  // Check if WordPress backend is available
+  const wordpressUrl = process.env.WORDPRESS_GRAPHQL_URL || process.env.NEXT_PUBLIC_WORDPRESS_API_URL
+  
+  if (!wordpressUrl || wordpressUrl.includes('localhost')) {
+    console.log(`WordPress backend not available, using mock data for slug: ${slug}`)
+    return mockPosts.find(post => post.slug === slug) || null
+  }
+
   try {
     const { data } = await client.query({
       query: GET_POST_BY_SLUG,
       variables: { slug },
       errorPolicy: 'all'
     })
-    return data?.postBy || null
+    return data?.postBy || mockPosts.find(post => post.slug === slug) || null
   } catch (error) {
-    console.error(`Error fetching post with slug ${slug}:`, error)
-    return null
+    console.error(`Error fetching post with slug ${slug}, falling back to mock data:`, error)
+    return mockPosts.find(post => post.slug === slug) || null
   }
 }
 
@@ -154,15 +236,23 @@ export async function getAllPages() {
 }
 
 export async function getSiteSettings() {
+  // Check if WordPress backend is available
+  const wordpressUrl = process.env.WORDPRESS_GRAPHQL_URL || process.env.NEXT_PUBLIC_WORDPRESS_API_URL
+  
+  if (!wordpressUrl || wordpressUrl.includes('localhost')) {
+    console.log('WordPress backend not available, using mock site settings')
+    return mockSiteSettings
+  }
+
   try {
     const { data } = await client.query({
       query: GET_SITE_SETTINGS,
       errorPolicy: 'all'
     })
-    return data?.generalSettings || {}
+    return data?.generalSettings || mockSiteSettings
   } catch (error) {
-    console.error('Error fetching site settings:', error)
-    return {}
+    console.error('Error fetching site settings, falling back to mock data:', error)
+    return mockSiteSettings
   }
 }
 
