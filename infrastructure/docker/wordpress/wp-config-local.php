@@ -63,3 +63,8 @@ ini_set('upload_max_filesize', '64M');
 ini_set('post_max_size', '64M');
 ini_set('max_execution_time', 300);
 ?>
+// Include headless enhancements
+if (file_exists(__DIR__ . '/wp-config-enhancements.php')) {
+    require_once __DIR__ . '/wp-config-enhancements.php';
+}
+EOF < /dev/null

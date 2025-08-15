@@ -1,0 +1,250 @@
+name: Deploy Static Site - Production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-static-production.yml'
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Force deployment even if no changes detected'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  NODE_VERSION: '18'
+  AZURE_STORAGE_ACCOUNT: ${{ secrets.PROD_STORAGE_ACCOUNT }}
+  AZURE_RESOURCE_GROUP: ${{ secrets.PROD_RESOURCE_GROUP }}
+  AZURE_FRONT_DOOR_PROFILE: ${{ secrets.PROD_FRONT_DOOR_PROFILE }}
+  AZURE_FRONT_DOOR_ENDPOINT: ${{ secrets.PROD_FRONT_DOOR_ENDPOINT }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+    
+    - name: Check for frontend changes
+      id: changes
+      run: |
+        if [ "${{ github.event.inputs.force_deploy }}" = "true" ]; then
+          echo "changes=true" >> $GITHUB_OUTPUT
+          echo "Forced deployment requested"
+        elif git diff --quiet HEAD~1 HEAD -- frontend/; then
+          echo "changes=false" >> $GITHUB_OUTPUT
+          echo "No frontend changes detected"
+        else
+          echo "changes=true" >> $GITHUB_OUTPUT
+          echo "Frontend changes detected"
+        fi
+    
+    - name: Setup Node.js
+      if: steps.changes.outputs.changes == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install dependencies
+      if: steps.changes.outputs.changes == 'true'
+      working-directory: frontend
+      run: npm ci
+    
+    - name: Setup WordPress GraphQL endpoint
+      if: steps.changes.outputs.changes == 'true'
+      working-directory: frontend
+      run: |
+        echo "NEXT_PUBLIC_WORDPRESS_API_URL=${{ secrets.PROD_WORDPRESS_URL }}/graphql" >> .env.production
+        echo "NEXT_PUBLIC_SITE_URL=https://${{ secrets.PROD_DOMAIN_NAME }}" >> .env.production
+        echo "NEXT_PUBLIC_ENVIRONMENT=production" >> .env.production
+    
+    - name: Build static site
+      if: steps.changes.outputs.changes == 'true'
+      working-directory: frontend
+      run: |
+        npm run build
+        npm run export
+    
+    - name: Optimize build output
+      if: steps.changes.outputs.changes == 'true'
+      working-directory: frontend
+      run: |
+        # Remove source maps in production
+        find out -name "*.map" -type f -delete
+        
+        # Compress CSS and JS files
+        find out -name "*.css" -type f -exec gzip -k {} \;
+        find out -name "*.js" -type f -exec gzip -k {} \;
+        
+        # Create manifest file
+        echo "{\"buildTime\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"commit\": \"${{ github.sha }}\", \"environment\": \"production\"}" > out/build-manifest.json
+    
+    - name: Azure Login
+      if: steps.changes.outputs.changes == 'true'
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Deploy to Azure Storage
+      if: steps.changes.outputs.changes == 'true'
+      working-directory: frontend
+      run: |
+        # Upload files to Azure Storage
+        az storage blob upload-batch \
+          --account-name ${{ env.AZURE_STORAGE_ACCOUNT }} \
+          --destination '$web' \
+          --source out \
+          --overwrite \
+          --content-cache-control "public, max-age=31536000, immutable" \
+          --pattern "*.js" \
+          --pattern "*.css" \
+          --pattern "*.woff" \
+          --pattern "*.woff2"
+        
+        # Upload HTML files with shorter cache
+        az storage blob upload-batch \
+          --account-name ${{ env.AZURE_STORAGE_ACCOUNT }} \
+          --destination '$web' \
+          --source out \
+          --overwrite \
+          --content-cache-control "public, max-age=300" \
+          --pattern "*.html"
+        
+        # Upload other files
+        az storage blob upload-batch \
+          --account-name ${{ env.AZURE_STORAGE_ACCOUNT }} \
+          --destination '$web' \
+          --source out \
+          --overwrite \
+          --exclude-pattern "*.js;*.css;*.html;*.woff;*.woff2"
+    
+    - name: Set correct MIME types
+      if: steps.changes.outputs.changes == 'true'
+      run: |
+        # Set MIME types for specific file extensions
+        az storage blob update \
+          --account-name ${{ env.AZURE_STORAGE_ACCOUNT }} \
+          --container-name '$web' \
+          --name '*.woff' \
+          --content-type 'font/woff'
+        
+        az storage blob update \
+          --account-name ${{ env.AZURE_STORAGE_ACCOUNT }} \
+          --container-name '$web' \
+          --name '*.woff2' \
+          --content-type 'font/woff2'
+    
+    - name: Purge CDN cache
+      if: steps.changes.outputs.changes == 'true'
+      run: |
+        # Purge Azure Front Door cache
+        az cdn afd endpoint purge \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --profile-name ${{ env.AZURE_FRONT_DOOR_PROFILE }} \
+          --endpoint-name ${{ env.AZURE_FRONT_DOOR_ENDPOINT }} \
+          --content-paths "/*"
+    
+    - name: Wait for CDN propagation
+      if: steps.changes.outputs.changes == 'true'
+      run: |
+        echo "Waiting for CDN cache purge to propagate..."
+        sleep 30
+    
+    - name: Validate deployment
+      if: steps.changes.outputs.changes == 'true'
+      run: |
+        # Test production site accessibility
+        SITE_URL="https://${{ secrets.PROD_DOMAIN_NAME }}"
+        
+        echo "Testing site accessibility: $SITE_URL"
+        
+        # Test with retries
+        for i in {1..5}; do
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SITE_URL" || echo "000")
+          
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Site is accessible (HTTP $HTTP_STATUS)"
+            break
+          else
+            echo "⏳ Site returned HTTP $HTTP_STATUS, retrying in 10 seconds... (attempt $i/5)"
+            sleep 10
+          fi
+          
+          if [ $i -eq 5 ]; then
+            echo "❌ Site validation failed after 5 attempts"
+            exit 1
+          fi
+        done
+        
+        # Test key pages
+        echo "Testing key pages..."
+        
+        # Test robots.txt
+        ROBOTS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SITE_URL/robots.txt" || echo "000")
+        if [ "$ROBOTS_STATUS" = "200" ]; then
+          echo "✅ robots.txt accessible"
+        else
+          echo "⚠️  robots.txt returned HTTP $ROBOTS_STATUS"
+        fi
+        
+        # Test sitemap.xml
+        SITEMAP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SITE_URL/sitemap.xml" || echo "000")
+        if [ "$SITEMAP_STATUS" = "200" ]; then
+          echo "✅ sitemap.xml accessible"
+        else
+          echo "⚠️  sitemap.xml returned HTTP $SITEMAP_STATUS"
+        fi
+    
+    - name: Performance monitoring
+      if: steps.changes.outputs.changes == 'true'
+      run: |
+        # Test Core Web Vitals using curl
+        SITE_URL="https://${{ secrets.PROD_DOMAIN_NAME }}"
+        
+        echo "Testing performance metrics..."
+        
+        # Test TTFB (Time to First Byte)
+        TTFB=$(curl -s -o /dev/null -w "%{time_starttransfer}" "$SITE_URL")
+        TTFB_MS=$(echo "$TTFB * 1000" | bc)
+        
+        echo "TTFB: ${TTFB_MS}ms"
+        
+        # Check if TTFB is under 200ms
+        if (( $(echo "$TTFB < 0.2" | bc -l) )); then
+          echo "✅ TTFB is excellent (< 200ms)"
+        elif (( $(echo "$TTFB < 0.5" | bc -l) )); then
+          echo "⚠️  TTFB is acceptable (< 500ms)"
+        else
+          echo "❌ TTFB is slow (> 500ms)"
+        fi
+    
+    - name: Notify deployment success
+      if: success() && steps.changes.outputs.changes == 'true'
+      run: |
+        echo "🚀 Production deployment completed successfully!"
+        echo "Site URL: https://${{ secrets.PROD_DOMAIN_NAME }}"
+        echo "Build: ${{ github.sha }}"
+        echo "Environment: production"
+    
+    - name: Notify no changes
+      if: steps.changes.outputs.changes == 'false'
+      run: |
+        echo "ℹ️  No frontend changes detected, skipping deployment"
+        echo "Use 'force_deploy: true' to deploy anyway"
+    
+    - name: Cleanup on failure
+      if: failure() && steps.changes.outputs.changes == 'true'
+      run: |
+        echo "❌ Deployment failed, check logs for details"
+        echo "Commit: ${{ github.sha }}"
+        echo "Workflow: ${{ github.workflow }}"
+        echo "Run ID: ${{ github.run_id }}"

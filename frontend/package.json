@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "codegen": "graphql-codegen --config codegen.ts"
+    "codegen": "graphql-codegen --config codegen.ts",
+    "serve": "npx serve@latest out",
+    "test:static": "npm run build && npm run serve",
+    "lighthouse": "npx lighthouse http://localhost:3000 --output=json,html --output-path=./lighthouse-results"
   },
   "dependencies": {
     "@apollo/client": "^3.8.7",

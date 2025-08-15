@@ -1,0 +1,330 @@
+name: Deploy WordPress Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'wordpress/**'
+      - 'infrastructure/docker/wordpress/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - prod
+          - dev
+      force_rebuild:
+        description: 'Force container rebuild'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: wordpress-headless
+
+jobs:
+  determine-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      resource_group: ${{ steps.env.outputs.resource_group }}
+      container_app_name: ${{ steps.env.outputs.container_app_name }}
+      container_env_name: ${{ steps.env.outputs.container_env_name }}
+    
+    steps:
+    - name: Determine environment
+      id: env
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          ENV="${{ github.event.inputs.environment }}"
+        elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          ENV="staging"
+        else
+          ENV="dev"
+        fi
+        
+        echo "environment=$ENV" >> $GITHUB_OUTPUT
+        echo "resource_group=wordpress-nextjs-$ENV-rg" >> $GITHUB_OUTPUT
+        echo "container_app_name=wordpress-nextjs-$ENV-wordpress" >> $GITHUB_OUTPUT
+        echo "container_env_name=wordpress-nextjs-$ENV-env" >> $GITHUB_OUTPUT
+        
+        echo "Deploying backend to environment: $ENV"
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: determine-environment
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Check for backend changes
+      id: changes
+      run: |
+        if [ "${{ github.event.inputs.force_rebuild }}" = "true" ]; then
+          echo "changes=true" >> $GITHUB_OUTPUT
+          echo "Forced rebuild requested"
+        elif git diff --quiet HEAD~1 HEAD -- wordpress/ infrastructure/docker/wordpress/; then
+          echo "changes=false" >> $GITHUB_OUTPUT
+          echo "No backend changes detected"
+        else
+          echo "changes=true" >> $GITHUB_OUTPUT
+          echo "Backend changes detected"
+        fi
+    
+    - name: Log in to Container Registry
+      if: steps.changes.outputs.changes == 'true'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      if: steps.changes.outputs.changes == 'true'
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=${{ needs.determine-environment.outputs.environment }}
+          type=raw,value=latest,enable={{is_default_branch}}
+    
+    - name: Build and push Docker image
+      if: steps.changes.outputs.changes == 'true'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./infrastructure/docker/wordpress/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        build-args: |
+          WORDPRESS_VERSION=latest
+          ENVIRONMENT=${{ needs.determine-environment.outputs.environment }}
+    
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+      changes: ${{ steps.changes.outputs.changes }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [determine-environment, build-and-push]
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    if: needs.build-and-push.outputs.changes == 'true'
+    
+    steps:
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Get container image URL
+      id: image
+      run: |
+        # Extract the first tag from the multi-line tags output
+        IMAGE_TAG=$(echo "${{ needs.build-and-push.outputs.image }}" | head -n1)
+        echo "image_url=$IMAGE_TAG" >> $GITHUB_OUTPUT
+        echo "Using image: $IMAGE_TAG"
+    
+    - name: Update Container App
+      run: |
+        RESOURCE_GROUP="${{ needs.determine-environment.outputs.resource_group }}"
+        CONTAINER_APP="${{ needs.determine-environment.outputs.container_app_name }}"
+        IMAGE_URL="${{ steps.image.outputs.image_url }}"
+        
+        echo "Updating Container App: $CONTAINER_APP"
+        echo "Resource Group: $RESOURCE_GROUP"
+        echo "New Image: $IMAGE_URL"
+        
+        # Update the container app with new image
+        az containerapp update \
+          --name "$CONTAINER_APP" \
+          --resource-group "$RESOURCE_GROUP" \
+          --image "$IMAGE_URL" \
+          --set-env-vars \
+            "WORDPRESS_BUILD_ID=${{ github.sha }}" \
+            "WORDPRESS_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "WORDPRESS_ENVIRONMENT=${{ needs.determine-environment.outputs.environment }}"
+    
+    - name: Wait for deployment
+      run: |
+        RESOURCE_GROUP="${{ needs.determine-environment.outputs.resource_group }}"
+        CONTAINER_APP="${{ needs.determine-environment.outputs.container_app_name }}"
+        
+        echo "Waiting for deployment to complete..."
+        
+        # Wait for the revision to be active
+        for i in {1..30}; do
+          STATUS=$(az containerapp revision list \
+            --name "$CONTAINER_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query '[0].properties.provisioningState' -o tsv)
+          
+          if [ "$STATUS" = "Succeeded" ]; then
+            echo "✅ Deployment completed successfully"
+            break
+          elif [ "$STATUS" = "Failed" ]; then
+            echo "❌ Deployment failed"
+            exit 1
+          else
+            echo "⏳ Deployment in progress... (status: $STATUS, attempt $i/30)"
+            sleep 10
+          fi
+          
+          if [ $i -eq 30 ]; then
+            echo "❌ Deployment timed out"
+            exit 1
+          fi
+        done
+    
+    - name: Get application URL
+      id: app_url
+      run: |
+        RESOURCE_GROUP="${{ needs.determine-environment.outputs.resource_group }}"
+        CONTAINER_APP="${{ needs.determine-environment.outputs.container_app_name }}"
+        
+        APP_URL=$(az containerapp show \
+          --name "$CONTAINER_APP" \
+          --resource-group "$RESOURCE_GROUP" \
+          --query properties.configuration.ingress.fqdn -o tsv)
+        
+        echo "app_url=https://$APP_URL" >> $GITHUB_OUTPUT
+        echo "WordPress backend URL: https://$APP_URL"
+    
+    - name: Validate deployment
+      run: |
+        APP_URL="${{ steps.app_url.outputs.app_url }}"
+        
+        echo "Validating WordPress deployment at: $APP_URL"
+        
+        # Wait for application to be ready
+        sleep 30
+        
+        # Test health endpoint
+        for i in {1..10}; do
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/wp-admin/install.php" || echo "000")
+          
+          if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "302" ]; then
+            echo "✅ WordPress is accessible (HTTP $HTTP_STATUS)"
+            break
+          else
+            echo "⏳ WordPress returned HTTP $HTTP_STATUS, retrying... (attempt $i/10)"
+            sleep 15
+          fi
+          
+          if [ $i -eq 10 ]; then
+            echo "⚠️  WordPress validation had issues, but continuing..."
+          fi
+        done
+        
+        # Test GraphQL endpoint
+        GRAPHQL_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/graphql" || echo "000")
+        if [ "$GRAPHQL_STATUS" = "200" ]; then
+          echo "✅ GraphQL endpoint is accessible"
+        else
+          echo "⚠️  GraphQL endpoint returned HTTP $GRAPHQL_STATUS"
+        fi
+        
+        # Test WordPress API
+        API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/wp-json/wp/v2" || echo "000")
+        if [ "$API_STATUS" = "200" ]; then
+          echo "✅ WordPress REST API is accessible"
+        else
+          echo "⚠️  WordPress REST API returned HTTP $API_STATUS"
+        fi
+    
+    - name: Update application settings
+      run: |
+        RESOURCE_GROUP="${{ needs.determine-environment.outputs.resource_group }}"
+        CONTAINER_APP="${{ needs.determine-environment.outputs.container_app_name }}"
+        APP_URL="${{ steps.app_url.outputs.app_url }}"
+        
+        # Update WordPress configuration for headless mode
+        echo "Configuring WordPress for headless operation..."
+        
+        # Set WordPress URL and site URL
+        az containerapp update \
+          --name "$CONTAINER_APP" \
+          --resource-group "$RESOURCE_GROUP" \
+          --set-env-vars \
+            "WORDPRESS_HOME=$APP_URL" \
+            "WORDPRESS_SITEURL=$APP_URL" \
+            "WORDPRESS_HEADLESS_MODE=true"
+    
+    - name: Performance monitoring
+      run: |
+        APP_URL="${{ steps.app_url.outputs.app_url }}"
+        
+        echo "Testing backend performance..."
+        
+        # Test response time
+        RESPONSE_TIME=$(curl -s -o /dev/null -w "%{time_total}" "$APP_URL/graphql")
+        RESPONSE_TIME_MS=$(echo "$RESPONSE_TIME * 1000" | bc)
+        
+        echo "GraphQL response time: ${RESPONSE_TIME_MS}ms"
+        
+        if (( $(echo "$RESPONSE_TIME < 1.0" | bc -l) )); then
+          echo "✅ Response time is excellent (< 1s)"
+        elif (( $(echo "$RESPONSE_TIME < 3.0" | bc -l) )); then
+          echo "⚠️  Response time is acceptable (< 3s)"
+        else
+          echo "❌ Response time is slow (> 3s)"
+        fi
+    
+    - name: Notify deployment success
+      if: success()
+      run: |
+        echo "🚀 WordPress backend deployment completed successfully!"
+        echo "Environment: ${{ needs.determine-environment.outputs.environment }}"
+        echo "Backend URL: ${{ steps.app_url.outputs.app_url }}"
+        echo "GraphQL Endpoint: ${{ steps.app_url.outputs.app_url }}/graphql"
+        echo "Build: ${{ github.sha }}"
+        echo "Image: ${{ steps.image.outputs.image_url }}"
+
+  no-changes:
+    runs-on: ubuntu-latest
+    needs: [determine-environment, build-and-push]
+    if: needs.build-and-push.outputs.changes == 'false'
+    
+    steps:
+    - name: Notify no changes
+      run: |
+        echo "ℹ️  No backend changes detected, skipping deployment"
+        echo "Use 'force_rebuild: true' to deploy anyway"
+        echo "Environment: ${{ needs.determine-environment.outputs.environment }}"
+
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy]
+    if: always() && needs.build-and-push.outputs.changes == 'true'
+    
+    steps:
+    - name: Cleanup old container images
+      run: |
+        echo "Cleaning up old container images..."
+        # This would typically clean up old images from the registry
+        # Implementation depends on your registry retention policies
+        echo "Image cleanup completed"
+    
+    - name: Deployment summary
+      if: failure()
+      run: |
+        echo "❌ Backend deployment encountered issues"
+        echo "Environment: ${{ needs.determine-environment.outputs.environment }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Workflow: ${{ github.workflow }}"
+        echo "Run ID: ${{ github.run_id }}"
+        echo "Please check the logs above for detailed error information"

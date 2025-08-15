@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "dev"
+    },
+    "projectName": {
+      "value": "wordpress-nextjs"
+    },
+    "location": {
+      "value": "eastus"
+    },
+    "domainName": {
+      "value": "dev.example.com"
+    },
+    "deployWordPressBackend": {
+      "value": true
+    },
+    "enableMonitoring": {
+      "value": false
+    },
+    "wordpressAdminEmail": {
+      "value": "admin@example.com"
+    },
+    "mysqlAdminUsername": {
+      "value": "wpadmin"
+    }
+  }
+}

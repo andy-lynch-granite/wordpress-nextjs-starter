@@ -1,0 +1,24 @@
+/*
+Theme Name: Headless Static WordPress
+Description: Optimized headless WordPress theme for static site generation with GraphQL and webhook integration
+Version: 1.0.0
+Author: Headless Development Team
+Text Domain: headless-static
+*/
+
+/* Minimal CSS for headless operation */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background: #f5f5f5;
+}
+
+.headless-notice {
+    background: #0073aa;
+    color: white;
+    padding: 20px;
+    text-align: center;
+    border-radius: 4px;
+}
+EOF < /dev/null

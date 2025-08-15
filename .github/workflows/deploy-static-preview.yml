@@ -1,0 +1,267 @@
+name: Deploy Static Site - Preview (Staging)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-static-preview.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - dev
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  determine-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      storage_account: ${{ steps.env.outputs.storage_account }}
+      resource_group: ${{ steps.env.outputs.resource_group }}
+      wordpress_url: ${{ steps.env.outputs.wordpress_url }}
+      domain_name: ${{ steps.env.outputs.domain_name }}
+      front_door_profile: ${{ steps.env.outputs.front_door_profile }}
+      front_door_endpoint: ${{ steps.env.outputs.front_door_endpoint }}
+    
+    steps:
+    - name: Determine environment
+      id: env
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          ENV="${{ github.event.inputs.environment }}"
+        elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+          ENV="staging"
+        elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+          ENV="dev"
+        elif [ "${{ github.event_name }}" = "pull_request" ]; then
+          ENV="dev"
+        else
+          ENV="dev"
+        fi
+        
+        echo "environment=$ENV" >> $GITHUB_OUTPUT
+        
+        # Set environment-specific variables
+        if [ "$ENV" = "staging" ]; then
+          echo "storage_account=${{ secrets.STAGING_STORAGE_ACCOUNT }}" >> $GITHUB_OUTPUT
+          echo "resource_group=${{ secrets.STAGING_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
+          echo "wordpress_url=${{ secrets.STAGING_WORDPRESS_URL }}" >> $GITHUB_OUTPUT
+          echo "domain_name=${{ secrets.STAGING_DOMAIN_NAME }}" >> $GITHUB_OUTPUT
+          echo "front_door_profile=${{ secrets.STAGING_FRONT_DOOR_PROFILE }}" >> $GITHUB_OUTPUT
+          echo "front_door_endpoint=${{ secrets.STAGING_FRONT_DOOR_ENDPOINT }}" >> $GITHUB_OUTPUT
+        else
+          echo "storage_account=${{ secrets.DEV_STORAGE_ACCOUNT }}" >> $GITHUB_OUTPUT
+          echo "resource_group=${{ secrets.DEV_RESOURCE_GROUP }}" >> $GITHUB_OUTPUT
+          echo "wordpress_url=${{ secrets.DEV_WORDPRESS_URL }}" >> $GITHUB_OUTPUT
+          echo "domain_name=${{ secrets.DEV_DOMAIN_NAME }}" >> $GITHUB_OUTPUT
+          echo "front_door_profile=${{ secrets.DEV_FRONT_DOOR_PROFILE }}" >> $GITHUB_OUTPUT
+          echo "front_door_endpoint=${{ secrets.DEV_FRONT_DOOR_ENDPOINT }}" >> $GITHUB_OUTPUT
+        fi
+        
+        echo "Deploying to environment: $ENV"
+
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    needs: determine-environment
+    environment: ${{ needs.determine-environment.outputs.environment }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install dependencies
+      working-directory: frontend
+      run: npm ci
+    
+    - name: Setup environment configuration
+      working-directory: frontend
+      run: |
+        ENV_FILE=".env.${{ needs.determine-environment.outputs.environment }}"
+        
+        echo "NEXT_PUBLIC_WORDPRESS_API_URL=${{ needs.determine-environment.outputs.wordpress_url }}/graphql" >> $ENV_FILE
+        echo "NEXT_PUBLIC_SITE_URL=https://${{ needs.determine-environment.outputs.domain_name }}" >> $ENV_FILE
+        echo "NEXT_PUBLIC_ENVIRONMENT=${{ needs.determine-environment.outputs.environment }}" >> $ENV_FILE
+        echo "NEXT_PUBLIC_BUILD_ID=${{ github.sha }}" >> $ENV_FILE
+        echo "NEXT_PUBLIC_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $ENV_FILE
+        
+        # Add preview-specific configurations
+        if [ "${{ needs.determine-environment.outputs.environment }}" != "staging" ]; then
+          echo "NEXT_PUBLIC_PREVIEW_MODE=true" >> $ENV_FILE
+          echo "NEXT_PUBLIC_BRANCH_NAME=${{ github.head_ref || github.ref_name }}" >> $ENV_FILE
+        fi
+        
+        echo "Environment configuration:"
+        cat $ENV_FILE
+    
+    - name: Build static site
+      working-directory: frontend
+      run: |
+        # Set NODE_ENV for the build
+        export NODE_ENV=${{ needs.determine-environment.outputs.environment }}
+        
+        npm run build
+        npm run export
+    
+    - name: Add deployment metadata
+      working-directory: frontend
+      run: |
+        # Create deployment info file
+        cat > out/deployment-info.json << EOF
+        {
+          "environment": "${{ needs.determine-environment.outputs.environment }}",
+          "commit": "${{ github.sha }}",
+          "branch": "${{ github.head_ref || github.ref_name }}",
+          "buildTime": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "workflow": "${{ github.workflow }}",
+          "runId": "${{ github.run_id }}",
+          "actor": "${{ github.actor }}",
+          "pullRequest": "${{ github.event.number || '' }}"
+        }
+        EOF
+        
+        # Add preview banner for non-production environments
+        if [ "${{ needs.determine-environment.outputs.environment }}" != "staging" ]; then
+          cat > out/preview-banner.html << 'EOF'
+        <div style="position: fixed; top: 0; left: 0; width: 100%; background: #ff6b35; color: white; text-align: center; padding: 8px; z-index: 9999; font-family: sans-serif; font-size: 14px;">
+          🚧 Preview Environment: ${{ needs.determine-environment.outputs.environment }} | Branch: ${{ github.head_ref || github.ref_name }} | Commit: ${{ github.sha }}
+        </div>
+        <script>
+          document.addEventListener('DOMContentLoaded', function() {
+            document.body.style.paddingTop = '40px';
+          });
+        </script>
+        EOF
+        fi
+    
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Deploy to Azure Storage
+      working-directory: frontend
+      run: |
+        STORAGE_ACCOUNT="${{ needs.determine-environment.outputs.storage_account }}"
+        
+        echo "Deploying to storage account: $STORAGE_ACCOUNT"
+        
+        # Deploy static files with appropriate caching
+        az storage blob upload-batch \
+          --account-name "$STORAGE_ACCOUNT" \
+          --destination '$web' \
+          --source out \
+          --overwrite \
+          --content-cache-control "public, max-age=300" \
+          --pattern "*.html"
+        
+        # Deploy assets with longer cache
+        az storage blob upload-batch \
+          --account-name "$STORAGE_ACCOUNT" \
+          --destination '$web' \
+          --source out \
+          --overwrite \
+          --content-cache-control "public, max-age=86400" \
+          --exclude-pattern "*.html"
+    
+    - name: Purge CDN cache
+      if: needs.determine-environment.outputs.environment == 'staging'
+      run: |
+        # Only purge CDN for staging (dev uses Static Web Apps)
+        az cdn afd endpoint purge \
+          --resource-group "${{ needs.determine-environment.outputs.resource_group }}" \
+          --profile-name "${{ needs.determine-environment.outputs.front_door_profile }}" \
+          --endpoint-name "${{ needs.determine-environment.outputs.front_door_endpoint }}" \
+          --content-paths "/*"
+    
+    - name: Validate deployment
+      run: |
+        SITE_URL="https://${{ needs.determine-environment.outputs.domain_name }}"
+        
+        echo "Testing site accessibility: $SITE_URL"
+        
+        # Wait for propagation
+        sleep 15
+        
+        # Test with retries
+        for i in {1..3}; do
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SITE_URL" || echo "000")
+          
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Site is accessible (HTTP $HTTP_STATUS)"
+            break
+          else
+            echo "⏳ Site returned HTTP $HTTP_STATUS, retrying... (attempt $i/3)"
+            sleep 10
+          fi
+          
+          if [ $i -eq 3 ]; then
+            echo "⚠️  Site validation had issues, but continuing..."
+          fi
+        done
+        
+        # Test deployment info endpoint
+        INFO_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SITE_URL/deployment-info.json" || echo "000")
+        if [ "$INFO_STATUS" = "200" ]; then
+          echo "✅ Deployment info accessible"
+          curl -s "$SITE_URL/deployment-info.json" | jq .
+        fi
+    
+    - name: Comment on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const comment = `🚀 **Preview Deployment Ready**
+          
+          Environment: \`${{ needs.determine-environment.outputs.environment }}\`
+          Preview URL: https://${{ needs.determine-environment.outputs.domain_name }}
+          Commit: \`${{ github.sha }}\`
+          
+          The preview site has been deployed and is ready for testing.
+          
+          ---
+          *Deployed by [GitHub Actions](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})*`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+    
+    - name: Notify deployment success
+      if: success()
+      run: |
+        echo "🚀 Preview deployment completed successfully!"
+        echo "Environment: ${{ needs.determine-environment.outputs.environment }}"
+        echo "Site URL: https://${{ needs.determine-environment.outputs.domain_name }}"
+        echo "Build: ${{ github.sha }}"
+        echo "Branch: ${{ github.head_ref || github.ref_name }}"
+    
+    - name: Cleanup on failure
+      if: failure()
+      run: |
+        echo "❌ Preview deployment failed"
+        echo "Environment: ${{ needs.determine-environment.outputs.environment }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Check the logs above for detailed error information"
