@@ -183,9 +183,43 @@ export async function getAllPosts() {
   // Check if WordPress backend is available
   const wordpressUrl = process.env.WORDPRESS_GRAPHQL_URL || process.env.NEXT_PUBLIC_WORDPRESS_API_URL
   
+  // Try WordPress REST API first, then GraphQL, then fall back to mock data
   if (!wordpressUrl || wordpressUrl.includes('localhost')) {
     console.log('WordPress backend not available, using mock data')
     return mockPosts
+  }
+
+  // Try WordPress REST API as fallback if GraphQL isn't available
+  try {
+    const restUrl = wordpressUrl.replace('/graphql', '/wp-json/wp/v2/posts')
+    const response = await fetch(restUrl)
+    if (response.ok) {
+      const restPosts = await response.json()
+      console.log('Using WordPress REST API data')
+      return restPosts.map((post: any) => ({
+        id: post.id.toString(),
+        slug: post.slug,
+        title: post.title.rendered,
+        content: post.content.rendered,
+        excerpt: post.excerpt.rendered,
+        date: post.date,
+        modified: post.modified,
+        author: {
+          node: {
+            name: 'WordPress Author',
+            slug: 'wp-author'
+          }
+        },
+        categories: {
+          nodes: []
+        },
+        tags: {
+          nodes: []
+        }
+      }))
+    }
+  } catch (error) {
+    console.log('WordPress REST API not available, trying GraphQL...')
   }
 
   try {
@@ -207,6 +241,42 @@ export async function getPostBySlug(slug: string) {
   if (!wordpressUrl || wordpressUrl.includes('localhost')) {
     console.log(`WordPress backend not available, using mock data for slug: ${slug}`)
     return mockPosts.find(post => post.slug === slug) || null
+  }
+
+  // Try WordPress REST API first
+  try {
+    const restUrl = wordpressUrl.replace('/graphql', `/wp-json/wp/v2/posts?slug=${slug}`)
+    const response = await fetch(restUrl)
+    if (response.ok) {
+      const restPosts = await response.json()
+      if (restPosts.length > 0) {
+        const post = restPosts[0]
+        console.log(`Using WordPress REST API data for slug: ${slug}`)
+        return {
+          id: post.id.toString(),
+          slug: post.slug,
+          title: post.title.rendered,
+          content: post.content.rendered,
+          excerpt: post.excerpt.rendered,
+          date: post.date,
+          modified: post.modified,
+          author: {
+            node: {
+              name: 'WordPress Author',
+              slug: 'wp-author'
+            }
+          },
+          categories: {
+            nodes: []
+          },
+          tags: {
+            nodes: []
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.log('WordPress REST API not available, trying GraphQL...')
   }
 
   try {

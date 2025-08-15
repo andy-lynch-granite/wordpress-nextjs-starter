@@ -33,67 +33,84 @@ jobs:
     
     - name: Build and export Next.js application
       working-directory: frontend
+      env:
+        NEXT_PUBLIC_WORDPRESS_API_URL: https://wordpressnextjs-dev-wordpress.ashyrock-47f94abe.northeurope.azurecontainerapps.io/graphql
       run: |
-        # Build the application
+        # Build the Next.js application for static export with WordPress API
+        echo "Building Next.js application with WordPress API..."
+        echo "WordPress API URL: $NEXT_PUBLIC_WORDPRESS_API_URL"
         npm run build
         
-        # Create a simple index.html for testing
-        mkdir -p out
-        cat > out/index.html << 'EOF'
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>WordPress + Next.js Starter</title>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 40px; }
-                .container { max-width: 800px; margin: 0 auto; }
-                .success { color: #10b981; }
-                .info { background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>🚀 WordPress + Next.js Starter</h1>
-                <p class="success">✅ Deployment successful!</p>
-                
-                <div class="info">
-                    <h3>Development Environment</h3>
-                    <p><strong>Build:</strong> ${{ github.sha }}</p>
-                    <p><strong>Branch:</strong> ${{ github.ref_name }}</p>
-                    <p><strong>Deployed:</strong> $(date)</p>
-                </div>
-                
-                <h2>Next Steps</h2>
-                <ul>
-                    <li>Deploy WordPress backend</li>
-                    <li>Configure headless WordPress setup</li>
-                    <li>Connect frontend to WordPress GraphQL API</li>
-                    <li>Set up production environment</li>
-                </ul>
-            </div>
-        </body>
-        </html>
-        EOF
+        # Verify the build output
+        echo "Build completed. Checking output directory..."
+        ls -la out/
+        
+        # Verify index.html exists
+        if [ ! -f "out/index.html" ]; then
+          echo "Error: index.html not found in out/ directory"
+          exit 1
+        fi
+        
+        echo "✅ Static export completed successfully"
     
     - name: Azure Login
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
     
+    - name: Configure Azure Storage for static website hosting
+      run: |
+        echo "Ensuring static website hosting is enabled..."
+        
+        # Enable static website hosting
+        az storage blob service-properties update \
+          --account-name "${{ secrets.DEV_STORAGE_ACCOUNT }}" \
+          --static-website \
+          --index-document "index.html" \
+          --404-document "404.html" \
+          --auth-mode login
+        
+        echo "✅ Static website hosting configured"
+    
     - name: Deploy to Azure Storage
       working-directory: frontend
       run: |
         echo "Deploying to storage account: ${{ secrets.DEV_STORAGE_ACCOUNT }}"
+        echo "Source directory contents:"
+        find out -type f | head -20
         
-        # Deploy all files from out directory
+        # Deploy all files from out directory to Azure Storage static website container
         az storage blob upload-batch \
           --account-name "${{ secrets.DEV_STORAGE_ACCOUNT }}" \
           --destination '$web' \
           --source out \
           --overwrite \
           --auth-mode login
+        
+        echo "✅ Files uploaded to Azure Storage successfully"
+        
+        # Set proper content types for CSS and JS files
+        echo "Setting content types for static assets..."
+        
+        # List uploaded files for verification
+        echo "Uploaded files:"
+        az storage blob list \
+          --account-name "${{ secrets.DEV_STORAGE_ACCOUNT }}" \
+          --container-name '$web' \
+          --auth-mode login \
+          --output table | head -10
+        
+        # Verify index.html exists
+        if az storage blob show \
+           --account-name "${{ secrets.DEV_STORAGE_ACCOUNT }}" \
+           --container-name '$web' \
+           --name index.html \
+           --auth-mode login &> /dev/null; then
+          echo "✅ index.html uploaded successfully"
+        else
+          echo "❌ index.html not found in storage"
+          exit 1
+        fi
     
     - name: Validate deployment
       run: |
@@ -102,15 +119,43 @@ jobs:
         echo "Testing site accessibility: $SITE_URL"
         
         # Wait for propagation
-        sleep 15
+        echo "Waiting for Azure CDN propagation..."
+        sleep 30
         
-        # Test site accessibility
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SITE_URL" || echo "000")
+        # Test site accessibility with retry logic
+        RETRY_COUNT=0
+        MAX_RETRIES=5
         
-        if [ "$HTTP_STATUS" = "200" ]; then
-          echo "✅ Site is accessible (HTTP $HTTP_STATUS)"
-        else
-          echo "⚠️ Site returned HTTP $HTTP_STATUS"
+        while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+          echo "Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES..."
+          
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SITE_URL" || echo "000")
+          
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Site is accessible (HTTP $HTTP_STATUS)"
+            
+            # Test if it's actually the Next.js content
+            CONTENT=$(curl -s "$SITE_URL" | head -1)
+            if echo "$CONTENT" | grep -q "<!DOCTYPE html>"; then
+              echo "✅ Valid HTML content detected"
+            else
+              echo "⚠️ Unexpected content format"
+            fi
+            
+            break
+          else
+            echo "⚠️ Site returned HTTP $HTTP_STATUS"
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+              echo "Retrying in 10 seconds..."
+              sleep 10
+            fi
+          fi
+        done
+        
+        if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+          echo "❌ Site validation failed after $MAX_RETRIES attempts"
+          exit 1
         fi
     
     - name: Deployment summary
