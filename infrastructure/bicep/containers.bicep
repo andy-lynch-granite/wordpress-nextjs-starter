@@ -19,8 +19,10 @@ param keyVaultName string
 @description('MySQL administrator username')
 param mysqlAdminUsername string
 
-@description('WordPress admin email')
-param wordpressAdminEmail string
+@description('MySQL administrator password')
+@secure()
+param mysqlAdminPassword string
+
 
 @description('Environment name')
 param environment string
@@ -83,7 +85,7 @@ resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2023-06-30' = {
   }
   properties: {
     administratorLogin: mysqlAdminUsername
-    administratorLoginPassword: keyVault.getSecret('mysql-admin-password')
+    administratorLoginPassword: mysqlAdminPassword
     version: '8.0.21'
     storage: {
       storageSizeGB: 20

@@ -19,8 +19,6 @@ param deployWordPressBackend bool = true
 @description('Enable monitoring and logging')
 param enableMonitoring bool = true
 
-@description('WordPress admin email')
-param wordpressAdminEmail string = 'admin@example.com'
 
 @description('MySQL administrator username')
 param mysqlAdminUsername string = 'wpadmin'
@@ -112,7 +110,7 @@ module wordpressBackend 'containers.bicep' = if (deployWordPressBackend) {
     subnetId: networking.outputs.containerSubnetId
     keyVaultName: keyVault.name
     mysqlAdminUsername: mysqlAdminUsername
-    wordpressAdminEmail: wordpressAdminEmail
+    mysqlAdminPassword: mysqlAdminPassword
     environment: environment
   }
   dependsOn: [
