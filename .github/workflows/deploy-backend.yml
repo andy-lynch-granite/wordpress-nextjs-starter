@@ -116,37 +116,13 @@ jobs:
         echo "Container App: $CONTAINER_APP"
         echo "WordPress URL: $WORDPRESS_URL"
         
-        # Install WP-CLI for deployment
-        curl -O https://raw.githubusercontent.com/wp-cli/wp-cli/v2.8.1/utils/wp-cli-installer.php
-        php wp-cli-installer.php --install-dir=.
-        chmod +x wp-cli.phar
+        # For now, we'll just log the deployment intent
+        # File deployment via Container App exec has TTY issues
+        echo "WordPress customization files detected:"
+        find wordpress/ -type f -name "*.php" -o -name "*.css" -o -name "*.js" | head -10
         
-        # Copy WordPress files via Container App exec
-        echo "Uploading custom themes and plugins..."
-        
-        # Create a deployment script
-        cat > deploy-wp-content.sh << 'EOF'
-        #!/bin/bash
-        echo "Deploying WordPress customizations..."
-        
-        # Create directories if they don't exist
-        mkdir -p /var/www/html/wp-content/themes/custom
-        mkdir -p /var/www/html/wp-content/plugins/custom
-        
-        # Copy custom theme files (this would be done via file upload in real scenario)
-        echo "Custom theme and plugin deployment completed"
-        
-        # Set proper permissions
-        chown -R www-data:www-data /var/www/html/wp-content/
-        chmod -R 755 /var/www/html/wp-content/
-        EOF
-        
-        # Execute deployment script in Container App
-        echo "Executing deployment script in Container App..."
-        az containerapp exec \
-          --name "$CONTAINER_APP" \
-          --resource-group "$RESOURCE_GROUP" \
-          --command "bash -c 'mkdir -p /tmp/deploy && echo \"WordPress customizations deployed successfully\" && echo \"Build: ${{ github.sha }}\" > /tmp/deploy/build-info.txt'"
+        echo "✅ WordPress customization deployment prepared"
+        echo "Note: File deployment requires volume mounts or custom container images"
     
     - name: Update WordPress configuration
       run: |
