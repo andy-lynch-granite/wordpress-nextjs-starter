@@ -7,8 +7,11 @@ export default function HomePage() {
             Headless WordPress + Next.js
           </h1>
           <p className="text-xl text-gray-600">
-            A modern starter kit for headless WordPress development
+            A modern starter kit deployed on Azure with CI/CD pipeline
           </p>
+          <div className="mt-4 inline-block bg-green-100 text-green-800 px-4 py-2 rounded-full">
+            ✅ Deployed to Azure Static Hosting
+          </div>
         </header>
 
         <main className="max-w-4xl mx-auto">
@@ -16,36 +19,25 @@ export default function HomePage() {
             <div className="bg-white p-6 rounded-lg shadow-md">
               <h2 className="text-2xl font-semibold mb-4">WordPress Backend</h2>
               <p className="text-gray-600 mb-4">
-                Headless WordPress with GraphQL API running on port 8081
+                Headless WordPress with GraphQL API - ready for Azure Container Apps deployment
               </p>
-              <a
-                href="http://localhost:8081"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition-colors"
-              >
-                Open WordPress Admin
-              </a>
+              <div className="text-sm text-orange-600 bg-orange-50 p-3 rounded">
+                🚧 Backend deployment coming next
+              </div>
             </div>
 
             <div className="bg-white p-6 rounded-lg shadow-md">
               <h2 className="text-2xl font-semibold mb-4">Next.js Frontend</h2>
               <p className="text-gray-600 mb-4">
-                Modern React frontend with static site generation
+                Modern React frontend deployed via GitHub Actions to Azure Storage
               </p>
               <div className="space-y-2">
-                <a
-                  href="/blog"
-                  className="block text-blue-500 hover:text-blue-600"
-                >
-                  → View Blog Posts
-                </a>
-                <a
-                  href="/about"
-                  className="block text-blue-500 hover:text-blue-600"
-                >
-                  → About Page
-                </a>
+                <div className="text-sm text-green-600 bg-green-50 p-3 rounded">
+                  ✅ CI/CD Pipeline Active
+                </div>
+                <div className="text-sm text-blue-600 bg-blue-50 p-3 rounded mt-2">
+                  📦 Static hosting on Azure Storage
+                </div>
               </div>
             </div>
           </div>
